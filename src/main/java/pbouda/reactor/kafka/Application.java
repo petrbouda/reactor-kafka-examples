@@ -81,6 +81,14 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
                             .map(__ -> record.receiverOffset());
                 // }, 1) - Flatmap has concurrency 1 that means that we are able to use only one DB connection.
                 })
+                // - Generation of inners and subscription: this operator is eagerly subscribing to its inners.
+                // - Ordering of the flattened values: this operator does not necessarily preserve original ordering,
+                //      as inner element are flattened as they arrive.
+                // - Interleaving: this operator lets values from different inners interleave (similar to merging the inner sequences).
+                //
+                // Look at the logs when we change parameters in FlatMap
+                // concurrency – the maximum number of in-flight inner sequences
+                // prefetch – the maximum in-flight elements from each inner Publisher sequence
                 .subscribe(new AwesomeSubscriber());
     }
 
