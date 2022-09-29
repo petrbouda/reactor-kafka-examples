@@ -9,10 +9,10 @@ import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.Banner;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.r2dbc.R2dbcAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationListener;
@@ -21,6 +21,7 @@ import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.r2dbc.core.DatabaseClient;
 import reactor.core.publisher.BaseSubscriber;
 import reactor.kafka.receiver.KafkaReceiver;
+import reactor.kafka.receiver.ReceiverOffset;
 import reactor.kafka.receiver.ReceiverOptions;
 
 import java.time.Duration;
@@ -28,10 +29,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-@SpringBootApplication
+@SpringBootApplication(exclude = R2dbcAutoConfiguration.class)
 public class Application implements ApplicationListener<ApplicationReadyEvent> {
 
     private static final Logger LOG = LoggerFactory.getLogger(Application.class);
+
 
     public static void main(String[] args) {
         new SpringApplicationBuilder(Application.class)
@@ -58,7 +60,11 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
                 env.getRequiredProperty("database.password", String.class),
                 env.getRequiredProperty("database.name", String.class));
 
-        DatabaseClient databaseClient = databaseClient(connectionPool);
+        DatabaseClient databaseClient = DatabaseClient.builder()
+                .connectionFactory(connectionPool)
+                .build();
+
+        Repository repository = new Repository(databaseClient);
 
         ReceiverOptions<String, String> receiverOptions = receiverOptions(
                 env.getRequiredProperty("kafka.topic", String.class),
@@ -66,24 +72,23 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
 
         KafkaReceiver.create(receiverOptions)
                 .receive()
-                .map(record -> {
-                    String value = record.value();
-                    return value;
+                .flatMap(record -> {
+                    LOG.info("Processing offset={}", record.receiverOffset().offset());
+                    Person person = Person.ofCsv(record.value());
+                    return repository.insert(person)
+                            .map(__ -> record.receiverOffset());
                 })
-//                .doOnNext(__ -> MESSAGE_COUNT.increment())
-//                .map(messageConverter)
-//                .filter(JsonConversionResult::success)
-//                .flatMap(captainClient::submit)
                 .subscribe(new AwesomeSubscriber());
     }
 
-    private static class AwesomeSubscriber extends BaseSubscriber<String> {
+    private static class AwesomeSubscriber extends BaseSubscriber<ReceiverOffset> {
 
         private static final Logger LOG = LoggerFactory.getLogger(AwesomeSubscriber.class);
 
         @Override
-        protected void hookOnNext(String value) {
-            LOG.info("Processed: {}", value);
+        protected void hookOnNext(ReceiverOffset offset) {
+            LOG.info("Processed: offset={}", offset.offset());
+            offset.acknowledge();
         }
 
         @Override
@@ -98,11 +103,7 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
     }
 
     private static ConnectionPool connectionFactory(
-            @Value("${database.host:localhost}") String host,
-            @Value("${database.port:26257}") int port,
-            @Value("${database.username:root}") String username,
-            @Value("${database.password:}") String password,
-            @Value("${database.name:postgres}") String name) {
+            String host, int port, String username, String password, String name) {
 
         PostgresqlConnectionConfiguration configuration =
                 PostgresqlConnectionConfiguration.builder()
@@ -111,7 +112,7 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
                         .port(port)
                         .username(username)
                         .password(password)
-                        .database("postgres")
+                        .database(name)
                         .build();
 
         ConnectionPoolConfiguration poolConfiguration =
@@ -122,12 +123,6 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
                         .build();
 
         return new ConnectionPool(poolConfiguration);
-    }
-
-    private static DatabaseClient databaseClient(ConnectionPool connectionPool) {
-        return DatabaseClient.builder()
-                .connectionFactory(connectionPool)
-                .build();
     }
 
     private static ReceiverOptions<String, String> receiverOptions(String topicName, String bootstrapServers) {

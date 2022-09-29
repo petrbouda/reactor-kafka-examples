@@ -18,7 +18,8 @@ public class PostgresqlInitializer implements
     private static final Logger LOG = LoggerFactory.getLogger(PostgresqlInitializer.class);
 
     private static final PostgreSQLContainer<?> CONTAINER =
-            new PostgreSQLContainer<>(DockerImageName.parse("postgres"));
+            new PostgreSQLContainer<>(DockerImageName.parse("postgres"))
+                    .withInitScript("init.sql");
 
     @Override
     public void initialize(ConfigurableApplicationContext applicationContext) {
