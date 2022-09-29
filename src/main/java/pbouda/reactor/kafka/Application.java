@@ -73,7 +73,7 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
                 env.getRequiredProperty("kafka.bootstrapServers", String.class));
 
         KafkaReceiver.create(receiverOptions)
-                .receive(1)
+                .receive()
                 .flatMap(record -> {
                     LOG.info("Start processing: offset={}", record.receiverOffset().offset());
                     Person person = Person.ofCsv(record.value());
