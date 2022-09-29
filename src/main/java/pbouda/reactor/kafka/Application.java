@@ -73,7 +73,7 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
         KafkaReceiver.create(receiverOptions)
                 .receive()
                 .flatMap(record -> {
-                    LOG.info("Processing offset={}", record.receiverOffset().offset());
+                    LOG.info("Start processing: offset={}", record.receiverOffset().offset());
                     Person person = Person.ofCsv(record.value());
                     return repository.insert(person)
                             .map(__ -> record.receiverOffset());
