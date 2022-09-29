@@ -7,6 +7,7 @@ import io.r2dbc.postgresql.PostgresqlConnectionFactory;
 import io.r2dbc.postgresql.client.SSLMode;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.Banner;
@@ -20,6 +21,7 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.r2dbc.core.DatabaseClient;
 import reactor.core.publisher.BaseSubscriber;
+import reactor.core.publisher.Hooks;
 import reactor.kafka.receiver.KafkaReceiver;
 import reactor.kafka.receiver.ReceiverOffset;
 import reactor.kafka.receiver.ReceiverOptions;
@@ -71,12 +73,13 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
                 env.getRequiredProperty("kafka.bootstrapServers", String.class));
 
         KafkaReceiver.create(receiverOptions)
-                .receive()
+                .receive(1)
                 .flatMap(record -> {
                     LOG.info("Start processing: offset={}", record.receiverOffset().offset());
                     Person person = Person.ofCsv(record.value());
                     return repository.insert(person)
                             .map(__ -> record.receiverOffset());
+                // }, 1) - Flatmap has concurrency 1 that means that we are able to use only one DB connection.
                 })
                 .subscribe(new AwesomeSubscriber());
     }
@@ -85,10 +88,16 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
 
         private static final Logger LOG = LoggerFactory.getLogger(AwesomeSubscriber.class);
 
+//        @Override
+//        protected void hookOnSubscribe(Subscription subscription) {
+//            subscription.request(1);
+//        }
+
         @Override
         protected void hookOnNext(ReceiverOffset offset) {
             LOG.info("Processed: offset={}", offset.offset());
             offset.acknowledge();
+//            request(1);
         }
 
         @Override
