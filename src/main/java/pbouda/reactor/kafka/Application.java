@@ -17,11 +17,9 @@ import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.ConfigurableApplicationContext;
-import org.springframework.context.annotation.Bean;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.r2dbc.core.DatabaseClient;
 import reactor.core.publisher.BaseSubscriber;
-import reactor.core.scheduler.Schedulers;
 import reactor.kafka.receiver.KafkaReceiver;
 import reactor.kafka.receiver.ReceiverOptions;
 
@@ -29,7 +27,6 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ScheduledExecutorService;
 
 @SpringBootApplication
 public class Application implements ApplicationListener<ApplicationReadyEvent> {
@@ -54,18 +51,20 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
         Pushatko pushatko = new Pushatko(env);
         pushatko.produce(1000);
 
-        Config config = new Config(
+        ConnectionPool connectionPool = connectionFactory(
+                env.getRequiredProperty("database.host", String.class),
+                env.getRequiredProperty("database.port", int.class),
+                env.getRequiredProperty("database.username", String.class),
+                env.getRequiredProperty("database.password", String.class),
+                env.getRequiredProperty("database.name", String.class));
+
+        DatabaseClient databaseClient = databaseClient(connectionPool);
+
+        ReceiverOptions<String, String> receiverOptions = receiverOptions(
                 env.getRequiredProperty("kafka.topic", String.class),
-                env.getRequiredProperty("kafka.bootstrapServers", String.class),
-                "test-consumer",
-                "earliest",
-                0,
-                Duration.ofSeconds(1),
-                null
-        );
+                env.getRequiredProperty("kafka.bootstrapServers", String.class));
 
-
-        KafkaReceiver.create(receiverOptions(config))
+        KafkaReceiver.create(receiverOptions)
                 .receive()
                 .map(record -> {
                     String value = record.value();
@@ -98,78 +97,54 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
         }
     }
 
-    @Bean(destroyMethod = "dispose")
-    public ConnectionPool connectionFactory(
+    private static ConnectionPool connectionFactory(
             @Value("${database.host:localhost}") String host,
             @Value("${database.port:26257}") int port,
             @Value("${database.username:root}") String username,
             @Value("${database.password:}") String password,
-            @Value("${database.name:postgres}") String name,
-            @Value("${database.initConnections:5}") int initConnections,
-            @Value("${database.maxConnections:10}") int maxConnections,
-            @Value("${database.maxIdleInSec:60}") int maxIdleInSec,
-            @Value("${database.registerJmx:false}") boolean registerJmx) {
+            @Value("${database.name:postgres}") String name) {
 
         PostgresqlConnectionConfiguration configuration =
                 PostgresqlConnectionConfiguration.builder()
-                        .applicationName("testapp")
                         .sslMode(SSLMode.DISABLE)
                         .host(host)
                         .port(port)
                         .username(username)
                         .password(password)
-                        .database(name)
+                        .database("postgres")
                         .build();
 
         ConnectionPoolConfiguration poolConfiguration =
                 ConnectionPoolConfiguration.builder(new PostgresqlConnectionFactory(configuration))
-                        .maxIdleTime(Duration.ofSeconds(maxIdleInSec))
-                        .initialSize(initConnections)
-                        .maxSize(maxConnections)
-                        .name("kyc")
-                        .registerJmx(registerJmx)
+                        .maxIdleTime(Duration.ofSeconds(10))
+                        .initialSize(1)
+                        .maxSize(10)
                         .build();
 
         return new ConnectionPool(poolConfiguration);
     }
 
-    @Bean
-    public DatabaseClient databaseClient(ConnectionPool connectionPool) {
+    private static DatabaseClient databaseClient(ConnectionPool connectionPool) {
         return DatabaseClient.builder()
                 .connectionFactory(connectionPool)
                 .build();
     }
 
-    private static ReceiverOptions<String, String> receiverOptions(Config config) {
+    private static ReceiverOptions<String, String> receiverOptions(String topicName, String bootstrapServers) {
         Map<String, Object> props = new HashMap<>();
-        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, config.bootstrapServers());
-        props.put(ConsumerConfig.GROUP_ID_CONFIG, config.consumerGroupId());
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, "test-consumer");
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
-        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, config.initialOffset());
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
 
-        ReceiverOptions<String, String> receiverOptions = ReceiverOptions.<String, String>create(props)
+        return ReceiverOptions.<String, String>create(props)
                 // Deferred Commits:
                 // How many messages can be consumed and still waiting for the one which is not acknowledged
                 // It's not precise because of message prefetching
-                .maxDeferredCommits(config.deferredCommits())
-                .commitInterval(config.commitInterval())
-                .subscription(List.of(config.topic()));
-
-        if (config.executor != null) {
-            receiverOptions.schedulerSupplier(() -> Schedulers.fromExecutor(config.executor()));
-        }
-
-        return receiverOptions;
-    }
-
-    public record Config(
-            String topic,
-            String bootstrapServers,
-            String consumerGroupId,
-            String initialOffset,
-            int deferredCommits,
-            Duration commitInterval,
-            ScheduledExecutorService executor) {
+                .maxDeferredCommits(0)
+                .commitInterval(Duration.ofSeconds(1))
+                // .schedulerSupplier(() -> Schedulers.fromExecutor(config.executor()))
+                .subscription(List.of(topicName));
     }
 }

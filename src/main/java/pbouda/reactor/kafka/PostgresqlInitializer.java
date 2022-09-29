@@ -29,6 +29,9 @@ public class PostgresqlInitializer implements
         ConfigurableEnvironment environment = applicationContext.getEnvironment();
         MutablePropertySources propertySources = environment.getPropertySources();
         Map<String, Object> database = Map.of(
+                "database.name", CONTAINER.getDatabaseName(),
+                "database.username", CONTAINER.getUsername(),
+                "database.password", CONTAINER.getPassword(),
                 "database.host", CONTAINER.getHost(),
                 "database.port", CONTAINER.getMappedPort(5432));
 
