@@ -7,6 +7,7 @@ import io.r2dbc.postgresql.PostgresqlConnectionFactory;
 import io.r2dbc.postgresql.client.SSLMode;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
+import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.Banner;
@@ -23,11 +24,14 @@ import reactor.core.publisher.BaseSubscriber;
 import reactor.kafka.receiver.KafkaReceiver;
 import reactor.kafka.receiver.ReceiverOffset;
 import reactor.kafka.receiver.ReceiverOptions;
+import reactor.kafka.receiver.ReceiverRecord;
 
 import java.time.Duration;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 @SpringBootApplication(exclude = R2dbcAutoConfiguration.class)
 public class Application implements ApplicationListener<ApplicationReadyEvent> {
@@ -78,8 +82,8 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
                     Person person = Person.ofCsv(record.value());
 
                     return repository.insert(person)
-                            // .delayElement(Duration.ofSeconds(1))
-                            .map(__ -> record.receiverOffset());
+                            .delayElement(Duration.ofMillis(500))
+                            .map(__ -> record);
                 }, 1) // - Flatmap has concurrency 1 that means that we are able to use only one DB connection.
                 // })
                 // - Generation of inners and subscription: this operator is eagerly subscribing to its inners.
@@ -93,20 +97,55 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
                 .subscribe(new AwesomeSubscriber());
     }
 
-    private static class AwesomeSubscriber extends BaseSubscriber<ReceiverOffset> {
+    private static class AwesomeSubscriber extends BaseSubscriber<ReceiverRecord<String, String>> {
+
+        private static final ScheduledExecutorService EXECUTOR = Executors.newSingleThreadScheduledExecutor();
+
+        /**
+         * The ACKs will be released from the lowest to the highest offsets
+         * - that means that the Deferred Commit can be immediately committed and new record processed.
+         */
+        private static final Queue<ReceiverOffset> DELAYED_ACKS_QUEUE = new ConcurrentLinkedQueue<>();
+
+        /**
+         * The ACKs will be released from the highest to the lowest offsets
+         * - that means that the Deferred Commit needs to wait for the lowest one to be released
+         * (to fill the gab in the row).
+         */
+        private static final Stack<ReceiverOffset> DELAYED_ACKS_STACK = new Stack<>();
 
         private static final Logger LOG = LoggerFactory.getLogger(AwesomeSubscriber.class);
 
-//        @Override
-//        protected void hookOnSubscribe(Subscription subscription) {
-//            subscription.request(1);
-//        }
+        @Override
+        protected void hookOnSubscribe(Subscription subscription) {
+            super.hookOnSubscribe(subscription);
+
+            EXECUTOR.scheduleAtFixedRate(() -> {
+                ReceiverOffset offset;
+                while ((offset = DELAYED_ACKS_QUEUE.poll()) != null) {
+//                while ((offset = DELAYED_ACKS_STACK.pop()) != null) {
+                    offset.acknowledge();
+                    try {
+                        Thread.sleep(1000);
+                    } catch (InterruptedException ignored) {
+                    }
+                    LOG.info("RELEASE: offset acknowledged: {}", offset);
+                }
+            }, 30, 30, TimeUnit.SECONDS);
+        }
 
         @Override
-        protected void hookOnNext(ReceiverOffset offset) {
-            LOG.info("Processed: offset={}", offset.offset());
-            offset.acknowledge();
-//            request(1);
+        protected void hookOnNext(ReceiverRecord<String, String> record) {
+            ReceiverOffset receiverOffset = record.receiverOffset();
+            LOG.info("Processed: offset={}", receiverOffset.offset());
+
+            int key = Integer.parseInt(record.key());
+            if (key % 2 == 0) {
+                receiverOffset.acknowledge();
+            } else {
+//                DELAYED_ACKS_STACK.push(receiverOffset);
+                 DELAYED_ACKS_QUEUE.offer(receiverOffset);
+            }
         }
 
         @Override
@@ -150,14 +189,19 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        // prefetch from Kafka
+        props.put(ConsumerConfig.MAX_POLL_RECORDS_CONFIG, 1);
 
         return ReceiverOptions.<String, String>create(props)
                 // Deferred Commits:
                 // How many messages can be consumed and still waiting for the one which is not acknowledged
                 // It's not precise because of message prefetching
-                // .maxDeferredCommits(2)
+                // 1 -> 5 processed (MAX_POLL_RECORDS_CONFIG, 1)
+                // 2 -> 7 processed (MAX_POLL_RECORDS_CONFIG, 1)
+                // 3 -> 9 processed (MAX_POLL_RECORDS_CONFIG, 1)
+                .maxDeferredCommits(5)
                 // .commitBatchSize(10)
-                // .commitInterval(Duration.ofSeconds(1))
+                .commitInterval(Duration.ofSeconds(1))
                 // .schedulerSupplier(() -> Schedulers.fromExecutor(config.executor()))
                 .subscription(List.of(topicName));
     }
