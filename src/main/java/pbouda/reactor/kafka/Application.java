@@ -78,9 +78,11 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
                     LOG.info("Start processing: offset={}", record.receiverOffset().offset());
                     Person person = Person.ofCsv(record.value());
                     return repository.insert(person)
-                            .map(__ -> record.receiverOffset());
-                // }, 1) - Flatmap has concurrency 1 that means that we are able to use only one DB connection.
-                })
+                            .map(__ -> record.receiverOffset())
+                            .doOnNext(offset -> LOG.info("MIDDLEProcessed: offset={}", offset.offset()))
+                            .delayElement(Duration.ofSeconds(10));
+                 }, 1, 1) // - Flatmap has concurrency 1 that means that we are able to use only one DB connection.
+                // })
                 // - Generation of inners and subscription: this operator is eagerly subscribing to its inners.
                 // - Ordering of the flattened values: this operator does not necessarily preserve original ordering,
                 //      as inner element are flattened as they arrive.
