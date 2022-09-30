@@ -6,6 +6,8 @@
     <version>1.0-SNAPSHOT</version>
 
     <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
         <reactor-kafka.version>1.3.12</reactor-kafka.version>
         <testcontainers.version>1.17.3</testcontainers.version>
         <spring-boot.version>2.5.9</spring-boot.version>
@@ -27,7 +29,7 @@
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
+            <artifactId>spring-boot-starter</artifactId>
         </dependency>
 
         <dependency>

@@ -10,10 +10,9 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.MutablePropertySources;
-import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.FixedHostPortGenericContainer;
 import org.testcontainers.containers.KafkaContainer;
 import org.testcontainers.containers.Network;
-import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
 import org.testcontainers.utility.DockerImageName;
 
 import java.util.List;
@@ -28,13 +27,13 @@ public class KafkaInitializer implements ApplicationContextInitializer<Configura
     private static final KafkaContainer KAFKA_CONTAINER = new KafkaContainer(DockerImageName.parse("confluentinc/cp-kafka"))
             .withNetwork(Network.SHARED);
 
-    private static final GenericContainer<?> KAFKA_UI_CONTAINER = new GenericContainer<>(DockerImageName.parse("provectuslabs/kafka-ui:latest"))
-            .withNetwork(Network.SHARED)
-            .dependsOn(KAFKA_CONTAINER)
-            .withExposedPorts(8080)
-            .waitingFor(new HttpWaitStrategy().forPort(8080))
-            .withEnv("KAFKA_CLUSTERS_0_NAME", "local")
-            .withEnv("KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS", "PLAINTEXT://" + KAFKA_CONTAINER.getNetworkAliases().get(0) + ":9092");
+    private static final FixedHostPortGenericContainer<?> KAFKA_UI_CONTAINER =
+            new FixedHostPortGenericContainer<>("provectuslabs/kafka-ui:latest")
+                    .withNetwork(Network.SHARED)
+                    .dependsOn(KAFKA_CONTAINER)
+                    .withFixedExposedPort(9000, 8080)
+                    .withEnv("KAFKA_CLUSTERS_0_NAME", "local")
+                    .withEnv("KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS", "PLAINTEXT://" + KAFKA_CONTAINER.getNetworkAliases().get(0) + ":9092");
 
     @Override
     public void initialize(ConfigurableApplicationContext applicationContext) {

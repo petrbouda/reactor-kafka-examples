@@ -34,10 +34,9 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
 
     private static final Logger LOG = LoggerFactory.getLogger(Application.class);
 
-
     public static void main(String[] args) {
         new SpringApplicationBuilder(Application.class)
-                .web(WebApplicationType.REACTIVE)
+                .web(WebApplicationType.NONE)
                 .bannerMode(Banner.Mode.OFF)
                 .initializers(
                         new KafkaInitializer(),
@@ -74,10 +73,12 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
 
         KafkaReceiver.create(receiverOptions)
                 .receive()
-                .flatMap(record -> {
+                .concatMap(record -> {
                     LOG.info("Start processing: offset={}", record.receiverOffset().offset());
                     Person person = Person.ofCsv(record.value());
+
                     return repository.insert(person)
+                            // .delayElement(Duration.ofSeconds(1))
                             .map(__ -> record.receiverOffset());
                 }, 1) // - Flatmap has concurrency 1 that means that we are able to use only one DB connection.
                 // })
@@ -104,7 +105,7 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
         @Override
         protected void hookOnNext(ReceiverOffset offset) {
             LOG.info("Processed: offset={}", offset.offset());
-//            offset.acknowledge();
+            offset.acknowledge();
 //            request(1);
         }
 
@@ -154,9 +155,9 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
                 // Deferred Commits:
                 // How many messages can be consumed and still waiting for the one which is not acknowledged
                 // It's not precise because of message prefetching
-                .maxDeferredCommits(2)
-                .commitBatchSize(10)
-//                .commitInterval(Duration.ofSeconds(1))
+                // .maxDeferredCommits(2)
+                // .commitBatchSize(10)
+                // .commitInterval(Duration.ofSeconds(1))
                 // .schedulerSupplier(() -> Schedulers.fromExecutor(config.executor()))
                 .subscription(List.of(topicName));
     }
