@@ -77,7 +77,7 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
 
         KafkaReceiver.create(receiverOptions)
                 .receive()
-                .concatMap(record -> {
+                .flatMap(record -> {
                     LOG.info("Start processing: offset={}", record.receiverOffset().offset());
                     Person person = Person.ofCsv(record.value());
 
