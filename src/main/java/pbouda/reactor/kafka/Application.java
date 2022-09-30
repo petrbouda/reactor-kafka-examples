@@ -7,7 +7,6 @@ import io.r2dbc.postgresql.PostgresqlConnectionFactory;
 import io.r2dbc.postgresql.client.SSLMode;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
-import org.reactivestreams.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.Banner;
@@ -21,7 +20,6 @@ import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.r2dbc.core.DatabaseClient;
 import reactor.core.publisher.BaseSubscriber;
-import reactor.core.publisher.Hooks;
 import reactor.kafka.receiver.KafkaReceiver;
 import reactor.kafka.receiver.ReceiverOffset;
 import reactor.kafka.receiver.ReceiverOptions;
@@ -53,7 +51,9 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
         ConfigurableEnvironment env = context.getEnvironment();
 
         Pushatko pushatko = new Pushatko(env);
-        pushatko.produce(1000);
+        pushatko.produce(10_000);
+
+        LOG.info("Kafka messages prepared!");
 
         ConnectionPool connectionPool = connectionFactory(
                 env.getRequiredProperty("database.host", String.class),
@@ -78,10 +78,8 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
                     LOG.info("Start processing: offset={}", record.receiverOffset().offset());
                     Person person = Person.ofCsv(record.value());
                     return repository.insert(person)
-                            .map(__ -> record.receiverOffset())
-                            .doOnNext(offset -> LOG.info("MIDDLEProcessed: offset={}", offset.offset()))
-                            .delayElement(Duration.ofSeconds(10));
-                 }, 1, 1) // - Flatmap has concurrency 1 that means that we are able to use only one DB connection.
+                            .map(__ -> record.receiverOffset());
+                }, 1) // - Flatmap has concurrency 1 that means that we are able to use only one DB connection.
                 // })
                 // - Generation of inners and subscription: this operator is eagerly subscribing to its inners.
                 // - Ordering of the flattened values: this operator does not necessarily preserve original ordering,
@@ -106,7 +104,7 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
         @Override
         protected void hookOnNext(ReceiverOffset offset) {
             LOG.info("Processed: offset={}", offset.offset());
-            offset.acknowledge();
+//            offset.acknowledge();
 //            request(1);
         }
 
@@ -156,8 +154,9 @@ public class Application implements ApplicationListener<ApplicationReadyEvent> {
                 // Deferred Commits:
                 // How many messages can be consumed and still waiting for the one which is not acknowledged
                 // It's not precise because of message prefetching
-                .maxDeferredCommits(0)
-                .commitInterval(Duration.ofSeconds(1))
+                .maxDeferredCommits(2)
+                .commitBatchSize(10)
+//                .commitInterval(Duration.ofSeconds(1))
                 // .schedulerSupplier(() -> Schedulers.fromExecutor(config.executor()))
                 .subscription(List.of(topicName));
     }

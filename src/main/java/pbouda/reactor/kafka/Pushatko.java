@@ -34,9 +34,9 @@ public class Pushatko {
             String path = Resources.getResource("data.txt").getPath();
             List<String> lines = Files.readAllLines(Path.of(path));
 
+            long global_i = 0;
             outer:
             while (true) {
-                long global_i = 0;
                 for (String line : lines) {
                     producer.send(new ProducerRecord<>(topicName, String.valueOf(global_i), line), producerCallback());
                     if (++global_i >= count) {
