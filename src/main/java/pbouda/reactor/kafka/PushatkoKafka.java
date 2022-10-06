@@ -17,14 +17,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class Pushatko {
+public class PushatkoKafka {
 
-    private static final Logger LOG = LoggerFactory.getLogger(Pushatko.class);
+    private static final Logger LOG = LoggerFactory.getLogger(PushatkoKafka.class);
 
     private final String bootstrapServers;
     private final String topicName;
 
-    public Pushatko(ConfigurableEnvironment env) {
+    public PushatkoKafka(ConfigurableEnvironment env) {
         this.bootstrapServers = env.getRequiredProperty("kafka.bootstrapServers", String.class);
         this.topicName = env.getRequiredProperty("kafka.topic", String.class);
     }
